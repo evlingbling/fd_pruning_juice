@@ -20,10 +20,6 @@ from fd.heuristics import (
 
 from fd.scoring import compute_best_fd_per_rhs
 
-
-
-# TABLE EXTRACTION
-
 def extract_table_df(table):
     if isinstance(table, pd.DataFrame):
         return plain_df_copy(table)
@@ -38,16 +34,13 @@ def extract_table_df(table):
         obj = table.to_pandas()
         if isinstance(obj, pd.DataFrame):
             return plain_df_copy(obj)
-
+        
     raise AttributeError
 
 
 def rdb_to_tables(rdb) -> Dict[str, pd.DataFrame]:
     return {name: extract_table_df(table) for name, table in rdb.tables.items()}
 
-
-
-# HELPERS
 
 def parse_key_mappings(key_mappings) -> Dict[str, List[str]]:
     always_keep = {}
@@ -152,7 +145,7 @@ def build_keep_columns_schema_safe(
 
             if rhs in base_keep or score < fd_threshold:
                 continue
-            
+
             if rhs not in df.columns or lhs not in df.columns:
                 continue
 
@@ -184,10 +177,6 @@ def build_keep_columns_schema_safe(
 
     return keep_columns, score_tables
 
-
-
-# APPLY
-
 def make_pruned_rdb(rdb, keep_columns):
     from copy import deepcopy
 
@@ -207,10 +196,6 @@ def make_pruned_rdb(rdb, keep_columns):
         pruned.tables[t] = new_df
     pruned = rebuild_rdb_metadata_from_data(pruned)
     return pruned
-
-
-
-# KEY FIX
 
 def _coerce_key_series_to_string(s):
     return s.astype("string")

@@ -64,10 +64,7 @@ def safe_series(series: pd.Series) -> pd.Series:
     return series.map(make_hashable).astype("object")
 
 
-def find_unhashable_columns(
-    df: pd.DataFrame,
-    sample_rows: int = 5000,
-) -> list[str]:
+def find_unhashable_columns( df: pd.DataFrame, sample_rows: int = 5000,) -> list[str]:
     sub = df.head(sample_rows)
     bad_cols = []
 

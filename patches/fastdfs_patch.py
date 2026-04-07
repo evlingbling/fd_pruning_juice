@@ -84,12 +84,7 @@ def patch_fastdfs_canonicalize_types(fastdfs_type_transform):
             except Exception:
                 pass
 
-        for attr in [
-            "column_names", "column_types", "logical_types", "semantic_tags",
-            "dtypes", "dtype_map", "logical_type_map",
-            "data_types", "feature_types", "col_types",
-            "schema", "column_metadata", "column_stats", "ww_schema"
-        ]:
+        for attr in [ "column_names", "column_types", "logical_types", "semantic_tags", "dtypes", "dtype_map", "logical_type_map", "data_types", "feature_types", "col_types","schema", "column_metadata", "column_stats", "ww_schema"]:
             if hasattr(table_metadata, attr):
                 try:
                     setattr(
@@ -109,7 +104,6 @@ def patch_fastdfs_canonicalize_types(fastdfs_type_transform):
                         table_metadata.__dict__[k] = _filter_value(v, actual_cols_set)
                 except Exception:
                     pass
-
         return original_call(self, table_df, table_metadata, *args, **kwargs)
 
     wrapped._fd_patch_applied = True

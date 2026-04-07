@@ -17,11 +17,7 @@ def is_identifier_or_time(col: str) -> bool:
 
 def is_probably_measure_col(col: str) -> bool:
     c = col.lower()
-    keywords = [
-        "price", "ctr", "click", "count", "num", "score", "rate",
-        "hist", "position", "prob", "amount", "target", "label",
-        "rank", "freq", "duration", "timeon", "value", "age"
-    ]
+    keywords = [ "price", "ctr", "click", "count", "num", "score", "rate", "hist", "position", "prob", "amount", "target", "label", "rank", "freq", "duration", "timeon", "value", "age"]
     return any(k in c for k in keywords)
 
 
@@ -89,13 +85,9 @@ def is_low_information_rhs(col: str, series: pd.Series) -> bool:
     if is_probably_text_col(series):
         return False
 
-    schema_keywords = [
-        "level", "code", "type", "status", "flag",
-        "kind", "group", "class", "categorytype",
-    ]
+    schema_keywords = [ "level", "code", "type", "status", "flag", "kind", "group", "class", "categorytype",]
     if any(k in c for k in schema_keywords):
         return True
-
     if is_binary_or_near_binary(series):
         return True
     if is_low_cardinality(series, max_unique=10):
@@ -104,7 +96,6 @@ def is_low_information_rhs(col: str, series: pd.Series) -> bool:
         return True
     if is_discrete_numeric_low_card(series, max_unique=10):
         return True
-
     return False
 
 
@@ -124,7 +115,6 @@ def get_fd_drop_tier(col: str, series: pd.Series) -> str:
         return "hard_drop"
     if c.endswith("typecode"):
         return "hard_drop"
-
     if c.endswith("code"):
         return "soft_drop"
     if "type" in c:
@@ -133,7 +123,6 @@ def get_fd_drop_tier(col: str, series: pd.Series) -> str:
         return "soft_drop"
     if "flag" in c:
         return "soft_drop"
-
     if dominant_ratio(series) >= 0.99:
         return "hard_drop"
     if is_binary_or_near_binary(series):
