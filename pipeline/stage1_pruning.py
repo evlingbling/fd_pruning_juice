@@ -86,9 +86,6 @@ def merge_keep_dicts(*dicts):
     return {k: sorted(set(v)) for k, v in merged.items()}
 
 
-
-# SELECT TABLES
-
 def guess_prune_tables(tables, key_mappings=None) -> Set[str]:
     always_keep = parse_key_mappings(key_mappings)
     prune_tables = set()
@@ -103,9 +100,6 @@ def guess_prune_tables(tables, key_mappings=None) -> Set[str]:
             prune_tables.add(t)
 
     return prune_tables
-
-
-# CORE PRUNING
 
 def build_keep_columns_schema_safe(
     tables,
@@ -348,9 +342,6 @@ def rebuild_rdb_metadata_from_data(rdb):
 
     return rdb
 
-
-
-# RUNNER
 
 def run_stage1_pruning(
     dataset_rdb,
