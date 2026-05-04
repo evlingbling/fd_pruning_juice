@@ -11,7 +11,7 @@ from patches.fastdfs_patch import patch_fastdfs_canonicalize_types
 from rdblearn.datasets import RDBDataset
 from experiment.train_eval import run_one_experiment
 
-from pipeline.stage_1_GCN import (
+from pipeline.hypergraph_gcn import (
     run_stage1_pruning_hypergraph,
     rebuild_rdb_metadata_from_data,
     coerce_rdb_key_columns_to_string,
