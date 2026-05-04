@@ -1,5 +1,3 @@
-# STAGE 1 PRUNING MODULE
-
 from typing import Dict, List, Set, Optional, Tuple
 import numpy as np
 import pandas as pd

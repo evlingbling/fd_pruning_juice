@@ -42,11 +42,11 @@ def evaluate_predictions(y_true, y_pred) -> Dict[str, float]:
     return out
 
 
-def build_regressor(device: str = "cuda") -> RDBLearnRegressor:
+def build_regressor(device: str = "cuda", dfs_enabled: bool = True) -> RDBLearnRegressor:
     return RDBLearnRegressor(
         base_estimator=TabPFNRegressor(device=device),
         config={
-            "dfs": {"max_depth": 2},
+            "dfs": {"max_depth": 2 if dfs_enabled else 0},
             "enable_target_augmentation": True,
             "temporal_diff": {"enabled": True},
             "max_train_samples": 1000,
@@ -60,9 +60,9 @@ def run_one_experiment(
     task,
     device: str = "cuda",
     save_csv: bool = False,
+    dfs_enabled: bool = True,
 ):
-    reg = build_regressor(device=device)
-
+    reg = build_regressor(device=device, dfs_enabled=dfs_enabled)
     X_train = task.train_df.drop(columns=[task.metadata.target_col])
     y_train = task.train_df[task.metadata.target_col]
 

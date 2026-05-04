@@ -1,184 +1,188 @@
 import warnings
-warnings.filterwarnings(
-    "ignore",
-    message="pkg_resources is deprecated as an API",
-    category=UserWarning,
-)
-warnings.filterwarnings(
-    "ignore",
-    category=FutureWarning,
-    message="The behavior of value_counts with object-dtype is deprecated.*",
-)
+warnings.filterwarnings("ignore")
 
 import argparse
+import copy
+import numpy as np
 import pandas as pd
-
-from rdblearn.datasets import RDBDataset
 import fastdfs.transform.type_transform as fastdfs_type_transform
 
-from utils.common import set_global_seed
 from patches.fastdfs_patch import patch_fastdfs_canonicalize_types
-from pipeline.stage1_pruning import parse_extra_keep, run_stage1_pruning
-from experiment.train_eval import run_one_experiment, choose_task
+from rdblearn.datasets import RDBDataset
+from experiment.train_eval import run_one_experiment
+
+from pipeline.stage_1_GCN import (
+    run_stage1_pruning_hypergraph,
+    rebuild_rdb_metadata_from_data,
+    coerce_rdb_key_columns_to_string,
+)
 
 
-def print_table_pruning_summary(table_summary):
-    if not table_summary:
-        return
+def sanitize_rdb_for_fastdfs(rdb, source_rdb=None, key_mappings=None):
+    rdb = rebuild_rdb_metadata_from_data(rdb)
+    rdb = coerce_rdb_key_columns_to_string(rdb, key_mappings)
+    rdb = rebuild_rdb_metadata_from_data(rdb)
+    return rdb
 
-    print("\nTable pruning summary")
-    print("-" * 60)
 
-    items = []
-    for table_name, stats in table_summary.items():
-        items.append(f"{table_name}: {stats['before']} -> {stats['after']}")
+def is_number(x):
+    return isinstance(x, (int, float, np.integer, np.floating)) and not pd.isna(x)
 
-    mid = (len(items) + 1) // 2
-    left = items[:mid]
-    right = items[mid:]
 
-    max_left = max((len(x) for x in left), default=0)
+def make_summary_rows(base_m, hg_m, hg_name):
+    metric_keys = sorted(set(base_m.keys()) | set(hg_m.keys()))
 
-    for i in range(max(len(left), len(right))):
-        ltxt = left[i] if i < len(left) else ""
-        rtxt = right[i] if i < len(right) else ""
-        print(f"{ltxt:<{max_left + 4}}{rtxt}")
+    base_row = {"setting": "JUICE baseline"}
+    hg_row = {"setting": hg_name}
+
+    for k in metric_keys:
+        base_val = base_m.get(k, np.nan)
+        hg_val = hg_m.get(k, np.nan)
+
+        base_row[k] = base_val
+        hg_row[k] = hg_val
+
+        if is_number(base_val) and is_number(hg_val):
+            base_row[f"delta_{k}"] = 0.0
+            hg_row[f"delta_{k}"] = float(hg_val) - float(base_val)
+
+    return [base_row, hg_row]
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset", type=str, required=True)
-    parser.add_argument("--task", type=str, default=None)
-    parser.add_argument("--device", type=str, default="cuda")
-    parser.add_argument("--fd_thresholds", type=str, default="0.95,0.9,0.8")
-    parser.add_argument("--near_unique_threshold", type=float, default=0.995)
-    parser.add_argument("--extra_keep", type=str, default="")
-    parser.add_argument("--list_tasks_only", action="store_true")
-    parser.add_argument("--no_save_csv", action="store_true")
-    parser.add_argument("--seed", type=int, default=42)
-    args = parser.parse_args()
 
-    set_global_seed(args.seed)
+    parser.add_argument("--dataset", type=str, required=True)
+    parser.add_argument("--task", type=str, required=True)
+    parser.add_argument("--device", type=str, default="cuda")
+    parser.add_argument("--seed", type=int, default=42)
+
+    parser.add_argument("--fd_threshold", type=float, default=0.85)
+    parser.add_argument("--fd_source_mode", type=str, default="topk")
+    parser.add_argument("--fd_top_k", type=int, default=3)
+    parser.add_argument("--min_hyperedge_size", type=int, default=2)
+
+    parser.add_argument("--drop_score_threshold", type=float, default=0.8)
+
+    parser.add_argument("--hg_hidden_dim", type=int, default=None)
+    parser.add_argument("--hg_epochs", type=int, default=100)
+    parser.add_argument("--hg_lr", type=float, default=1e-2)
+    parser.add_argument("--hg_weight_decay", type=float, default=1e-4)
+    parser.add_argument("--hg_dropout", type=float, default=0.0)
+
+    args = parser.parse_args()
+    np.random.seed(args.seed)
+
     patch_fastdfs_canonicalize_types(fastdfs_type_transform)
 
     dataset = RDBDataset.from_relbench(args.dataset)
-    chosen_task_name, task = choose_task(dataset, args.task)
+    task = dataset.tasks[args.task]
 
-    if args.list_tasks_only:
-        return
+    print("\n" + "=" * 80)
+    print("EXPERIMENT CONFIG")
+    print("=" * 80)
+    print(f"Dataset              : {args.dataset}")
+    print(f"Task                 : {args.task}")
+    print(f"Seed                 : {args.seed}")
+    print(f"Device               : {args.device}")
+    print(f"FD threshold         : {args.fd_threshold}")
+    print(f"FD source mode       : {args.fd_source_mode}")
+    print(f"FD top-k             : {args.fd_top_k}")
+    print(f"Min hyperedge size   : {args.min_hyperedge_size}")
+    print(f"Drop score threshold : {args.drop_score_threshold}")
+    print(f"HG hidden dim        : {args.hg_hidden_dim}")
+    print(f"HG epochs            : {args.hg_epochs}")
+    print(f"HG lr                : {args.hg_lr}")
+    print(f"HG weight decay      : {args.hg_weight_decay}")
+    print(f"HG dropout           : {args.hg_dropout}")
 
-    thresholds = []
-    for x in args.fd_thresholds.split(","):
-        x = x.strip()
-        if x:
-            thresholds.append(float(x))
-
-    if len(thresholds) == 0:
-        raise ValueError("No valid thresholds found in --fd_thresholds")
-
-    thresholds = sorted(thresholds, reverse=True)
-    user_extra_keep = parse_extra_keep(args.extra_keep)
+    baseline_rdb = copy.deepcopy(dataset.rdb)
+    baseline_rdb = sanitize_rdb_for_fastdfs(
+        baseline_rdb,
+        dataset.rdb,
+        task.metadata.key_mappings,
+    )
 
     baseline_result = run_one_experiment(
         tag="baseline",
-        rdb=dataset.rdb,
+        rdb=baseline_rdb,
         task=task,
         device=args.device,
-        save_csv=(not args.no_save_csv),
+        save_csv=False,
+        dfs_enabled=True,
     )
 
-    results = [{
-        "setting": "Baseline",
-        "threshold": None,
-        "metrics": baseline_result["metrics"],
-        "table_summary": None,
-    }]
-
     base_m = baseline_result["metrics"]
-    summary_rows = []
 
-    if base_m["task_type"] == "binary":
-        summary_rows.append({
-            "setting": "Baseline",
-            "roc_auc": base_m["roc_auc"],
-            "pr_auc": base_m["pr_auc"],
-            "acc_0.5": base_m["acc_0.5"],
-            "delta_roc_auc": 0.0,
-            "delta_pr_auc": 0.0,
-            "delta_acc_0.5": 0.0,
-        })
-    else:
-        summary_rows.append({
-            "setting": "Baseline",
-            "rmse": base_m["rmse"],
-            "mae": base_m["mae"],
-            "r2": base_m["r2"],
-            "delta_rmse": 0.0,
-            "delta_mae": 0.0,
-            "delta_r2": 0.0,
-        })
+    print("\nBaseline metrics")
+    print("-" * 60)
+    print(base_m)
 
-    for th in thresholds:
-        pruned_rdb, keep_columns, score_tables, table_pruning_summary = run_stage1_pruning(
-            dataset_rdb=dataset.rdb,
-            key_mappings=task.metadata.key_mappings,
-            fd_threshold=th,
-            near_unique_threshold=args.near_unique_threshold,
-            extra_keep=user_extra_keep,
+    pruned_rdb, keep_columns, score_tables, table_pruning_summary, hg_debug = run_stage1_pruning_hypergraph(
+        dataset_rdb=dataset.rdb,
+        key_mappings=task.metadata.key_mappings,
+        fd_threshold=args.fd_threshold,
+        fd_source_mode=args.fd_source_mode,
+        fd_top_k=args.fd_top_k,
+        min_hyperedge_size=args.min_hyperedge_size,
+        drop_score_threshold=args.drop_score_threshold,
+        hg_hidden_dim=args.hg_hidden_dim,
+        hg_epochs=args.hg_epochs,
+        hg_lr=args.hg_lr,
+        hg_weight_decay=args.hg_weight_decay,
+        hg_dropout=args.hg_dropout,
+        device=args.device,
+    )
+
+    print("\nTable pruning summary")
+    print("-" * 60)
+    for table_name, s in table_pruning_summary.items():
+        print(f"{table_name}: {s['before']} -> {s['after']}")
+
+    print("\nHypergraphConv debug preview")
+    print("-" * 60)
+    for table_name, dbg in hg_debug.items():
+        hyperedges = dbg.get("hyperedges", [])
+        selected_fd = dbg.get("selected_fd", pd.DataFrame())
+        print(
+            f"{table_name}: "
+            f"{len(hyperedges)} hyperedges, "
+            f"{len(selected_fd)} selected FDs"
         )
 
-        result = run_one_experiment(
-            tag=f"stage1_fd_{str(th).replace('.', 'p')}",
-            rdb=pruned_rdb,
-            task=task,
-            device=args.device,
-            save_csv=(not args.no_save_csv),
-        )
+    pruned_rdb = sanitize_rdb_for_fastdfs(
+        pruned_rdb,
+        dataset.rdb,
+        task.metadata.key_mappings,
+    )
 
-        results.append({
-            "setting": f"FD ({th})",
-            "threshold": th,
-            "metrics": result["metrics"],
-            "table_summary": table_pruning_summary,
-        })
+    hg_result = run_one_experiment(
+        tag="hypergraph_conv_pruning",
+        rdb=pruned_rdb,
+        task=task,
+        device=args.device,
+        save_csv=False,
+        dfs_enabled=True,
+    )
 
-        m = result["metrics"]
+    hg_m = hg_result["metrics"]
 
-        if base_m["task_type"] == "binary":
-            summary_rows.append({
-                "setting": f"FD ({th})",
-                "roc_auc": m["roc_auc"],
-                "pr_auc": m["pr_auc"],
-                "acc_0.5": m["acc_0.5"],
-                "delta_roc_auc": m["roc_auc"] - base_m["roc_auc"],
-                "delta_pr_auc": m["pr_auc"] - base_m["pr_auc"],
-                "delta_acc_0.5": m["acc_0.5"] - base_m["acc_0.5"],
-            })
-        else:
-            summary_rows.append({
-                "setting": f"FD ({th})",
-                "rmse": m["rmse"],
-                "mae": m["mae"],
-                "r2": m["r2"],
-                "delta_rmse": m["rmse"] - base_m["rmse"],
-                "delta_mae": m["mae"] - base_m["mae"],
-                "delta_r2": m["r2"] - base_m["r2"],
-            })
+    print("\nHypergraphConv metrics")
+    print("-" * 60)
+    print(hg_m)
 
-        print(f"\nDataset   : {args.dataset}")
-        print(f"Task      : {chosen_task_name}")
-        print(f"Threshold : {th}")
-        print_table_pruning_summary(table_pruning_summary)
+    summary_rows = make_summary_rows(
+        base_m=base_m,
+        hg_m=hg_m,
+        hg_name="JUICE + PyG HypergraphConv pruning",
+    )
 
-    summary_df = pd.DataFrame(summary_rows)
+    df = pd.DataFrame(summary_rows)
 
     print("\n" + "=" * 80)
-    print(f"Applied Pruning (Dataset: {args.dataset})")
+    print("FINAL COMPARISON")
     print("=" * 80)
-    print(summary_df.to_string(index=False))
-
-    if not args.no_save_csv:
-        summary_df.to_csv("comparison_all_thresholds.csv", index=False)
+    print(df.to_string(index=False))
 
 
 if __name__ == "__main__":
